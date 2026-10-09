@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 
 # Mapping codons to single-letter amino acid abbreviations
@@ -26,7 +27,10 @@ def stream_fasta(fasta_source):
     Generator that parses FASTA input line-by-line, yielding (header, sequence)
     without loading all sequence contents into memory simultaneously.
     """
-    lines = fasta_source.splitlines() if "\n" in fasta_source else open(fasta_source, 'r')
+    # FIXED: open it as a file only if that file exists; anything else is
+    # FASTA text (the old check treated one-line text as a file name)
+    is_file = os.path.isfile(fasta_source)
+    lines = open(fasta_source, 'r') if is_file else fasta_source.splitlines()
     header = None
     seq_chunks = []
 
@@ -45,7 +49,7 @@ def stream_fasta(fasta_source):
     if header is not None:
         yield header, "".join(seq_chunks)
 
-    if not isinstance(fasta_source, str) or "\n" not in fasta_source:
+    if is_file:
         lines.close()
 
 
@@ -84,7 +88,7 @@ def find_genes_in_frame(clean_seq, frame_offset):
 
             if found_stop:
                 genes.append({
-                    'start': start_pos,
+                    'start': start_pos + 1,  # FIXED: 1-based, like GenBank
                     'stop': curr + 3,
                     'length_aa': len(protein),
                     'frame': frame_offset + 1,
@@ -261,4 +265,8 @@ ACAGGACTAAGGAACATCCCATCCATTCAATCCAGAGGTTTGTTTGGAGCCATTGCCGGTTTCATTGAAG
 GGGGATGGACTGGAATTC
 """
 
-    analyze_influenza_set(influenza_dataset, check_all_frames=True)
+    # FIXED: FASTA files given on the command line are used instead of the
+    # built-in data, e.g. python main6.py influenza_na.fasta
+    import sys
+    source = sys.argv[1] if len(sys.argv) > 1 else influenza_dataset
+    analyze_influenza_set(source, check_all_frames=True)

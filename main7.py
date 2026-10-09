@@ -27,7 +27,10 @@ def stream_fasta(file_path_or_text):
     MODIFIED: Replaced list-based parsing with a generator to process an
     unlimited number of sequences without loading all sequences into RAM at once.
     """
-    lines = file_path_or_text.splitlines() if "\n" in file_path_or_text else open(file_path_or_text, 'r')
+    # FIXED: open it as a file only if that file exists; anything else is
+    # FASTA text (the old check treated one-line text as a file name)
+    is_file = os.path.isfile(file_path_or_text)
+    lines = open(file_path_or_text, 'r') if is_file else file_path_or_text.splitlines()
     header = None
     chunks = []
 
@@ -46,44 +49,46 @@ def stream_fasta(file_path_or_text):
     if header is not None:
         yield header, "".join(chunks)
 
-    if not isinstance(file_path_or_text, str) or "\n" not in file_path_or_text:
+    if is_file:
         lines.close()
 
 
 def count_valid_genes(sequence):
     """
-    MODIFIED: Extracted from anterior extract_valid_proteins.
     Counts valid ORFs obeying the professor's rule:
     - Initiates translation at AUG.
     - Disregards any internal AUG within the frame until a stop codon is met.
     - Increments count only if terminated by a valid stop codon.
+    FIXED: each of the 3 reading frames is scanned on its own. The old version
+    moved one letter at a time and jumped past every stop, so genes in the
+    other frames that started before that stop were never counted.
     """
     clean_seq = sequence.upper().replace('T', 'U').replace(" ", "").replace("\n", "")
     seq_len = len(clean_seq)
     gene_count = 0
-    i = 0
 
-    while i < seq_len - 2:
-        if clean_seq[i:i + 3] == 'AUG':
+    for frame in range(3):
+        i = frame
+        while i + 3 <= seq_len:
+            if clean_seq[i:i + 3] != 'AUG':
+                i += 3
+                continue
+
             curr = i
             found_stop = False
-
             while curr + 3 <= seq_len:
-                codon = clean_seq[curr:curr + 3]
-                amino_acid = CODON_MAP.get(codon, '?')
-
-                if amino_acid == 'Stop':
+                if CODON_MAP.get(clean_seq[curr:curr + 3], '?') == 'Stop':
                     found_stop = True
-                    i = curr + 3  # Skip past the stop codon
                     break
                 curr += 3
 
-            if found_stop:
-                gene_count += 1
-            else:
-                i += 1
-        else:
-            i += 1
+            if not found_stop:
+                # no stop until the end: this ORF is invalid, and every later
+                # AUG in this frame would run off the end too
+                break
+
+            gene_count += 1
+            i = curr + 3  # continue after the stop codon
 
     return gene_count
 
@@ -171,8 +176,15 @@ def analyze_dataset_and_plot(records_source, chart_filename="gene_distribution.p
 
 
 # --- Demonstration with a synthetic 100-sequence test set ---
+# FIXED: a FASTA file given on the command line is analysed instead,
+# e.g. python main7.py influenza_na.fasta
 if __name__ == "__main__":
     import random
+    import sys
+
+    if len(sys.argv) > 1:
+        analyze_dataset_and_plot(sys.argv[1], chart_filename="gene_distribution.png")
+        sys.exit()
 
     # Generate synthetic mock FASTA data with 100 sequences to test scaling
     mock_fasta_records = []

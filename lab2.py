@@ -36,11 +36,35 @@ STOPS = ('UAA', 'UAG', 'UGA')
 
 def clean_sequence(text):
     # drop FASTA header lines and whitespace, convert DNA (T) to RNA (U)
-    seq = ""
+    parts = []
     for line in text.splitlines():
         if not line.startswith(">"):
-            seq = seq + line.strip().upper()
-    return seq.replace('T', 'U')
+            parts.append(line.strip().upper())
+    return "".join(parts).replace('T', 'U')
+
+
+def read_fasta(lines):
+    # yield (name, rna) one section at a time from any iterable of lines
+    # (an open file or text.splitlines()), so the number of sections is
+    # unlimited: only one sequence is held in memory at a time
+    name = None
+    chunks = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            if name is not None:
+                yield name, clean_sequence("\n".join(chunks))
+            name = line[1:]
+            chunks = []
+        else:
+            chunks.append(line)
+    if name is not None:
+        yield name, clean_sequence("\n".join(chunks))
+    elif chunks:
+        # plain sequence without a header
+        yield "sequence", clean_sequence("\n".join(chunks))
 
 
 def translate(rna):
@@ -108,6 +132,23 @@ def find_genes(rna):
     return genes
 
 
+def find_open_starts(rna):
+    # AUGs that never reach a stop (at most one per frame: the first AUG
+    # after the last stop of that frame; later AUGs are inside its reading
+    # and are disregarded). These are possible genes that are NOT valid.
+    starts = []
+    for frame in range(3):
+        last_stop = frame - 3
+        for i in range(frame, len(rna) - 2, 3):
+            if rna[i : i + 3] in STOPS:
+                last_stop = i
+        for i in range(last_stop + 3, len(rna) - 2, 3):
+            if rna[i : i + 3] == START:
+                starts.append({"frame": frame + 1, "start": i + 1})
+                break
+    return starts
+
+
 def longest_gene(genes):
     best = None
     for g in genes:
@@ -116,17 +157,15 @@ def longest_gene(genes):
     return best
 
 
-if __name__ == "__main__":
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "influenza_na.fasta")
-    with open(path) as f:
-        rna = clean_sequence(f.read())
-
+def report(name, rna):
     genes = find_genes(rna)
+    open_starts = find_open_starts(rna)
 
-    print("File:", path)
+    print("=" * 70)
+    print(name)
     print("Len:", len(rna), "nt")
     print("Valid genes (AUG ... stop):", len(genes))
+    print("AUG with no stop (not valid):", len(open_starts))
     print()
     for n, g in enumerate(genes, 1):
         print(n, ": frame", g["frame"], "| pos", g["start"], "-", g["end"],
@@ -142,3 +181,13 @@ if __name__ == "__main__":
         print(best["protein"])
         print()
         print(to_three_letter(best["protein"]))
+    print()
+
+
+if __name__ == "__main__":
+    # usage: python lab2.py [file.fasta]   (default: the influenza file)
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "influenza_na.fasta")
+    with open(path) as f:
+        for name, rna in read_fasta(f):
+            report(name, rna)
